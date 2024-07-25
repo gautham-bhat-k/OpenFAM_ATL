@@ -94,7 +94,7 @@ int main() {
     dataRegion = my_fam->fam_lookup_region(DATA_REGION);
   } catch (Fam_Exception &e) {
     cout << "data Region not found" << endl;
-    dataRegion = my_fam->fam_create_region(DATA_REGION, 1048576, 0777, RAID1);
+    dataRegion = my_fam->fam_create_region(DATA_REGION, 1048576, 0777, NULL);
   }
   char msg1[200] = {0};
   char msg2[200] = {0};
@@ -118,7 +118,7 @@ int main() {
   elapsed_seconds = end - start;
   cout << "get atomic elapsed time: " << elapsed_seconds.count() << endl;
   cout << msg2 << endl;
-  if (strcmp(msg1, msg2) != 0)
+  if (strncmp(msg1, msg2, 200) != 0)
     cout << "Test1: Comparison of full string failed" << endl;
   else
     cout << "Test1: Comparison of full string successful" << endl;
@@ -138,7 +138,11 @@ int main() {
   cout << "Gather atomic - strided" << endl;
   memset(msg2, 0, 200);
   start = std::chrono::high_resolution_clock::now();
+   try {
   myatlib->fam_gather_atomic(msg2, item1, 5, 1, 2, 2);
+   } catch(Fam_Exception &e) {
+	   cout << "gather error : " << e.fam_error_msg() << endl;
+	  }
   end = std::chrono::high_resolution_clock::now();
   elapsed_seconds = end - start;
   cout << "Gather strided atomic elapsed time: " << elapsed_seconds.count()
@@ -163,7 +167,11 @@ int main() {
   cout << "Gather atomic - indexed" << endl;
   memset(msg2, 0, 200);
   start = std::chrono::high_resolution_clock::now();
+  try {
   myatlib->fam_gather_atomic(msg2, item1, 5, indexes, 2);
+  } catch(Fam_Exception &e) {
+	  cout << "gather error : " << e.fam_error_msg() << endl;
+  }
   end = std::chrono::high_resolution_clock::now();
   elapsed_seconds = end - start;
   cout << "Gather indexed atomic elapsed time: " << elapsed_seconds.count()

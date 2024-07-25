@@ -95,7 +95,7 @@ int main(int argc, char *argv[]) {
     dataRegion = my_fam->fam_lookup_region(DATA_REGION);
   } catch (Fam_Exception &e) {
     cout << "data Region not found" << endl;
-    dataRegion = my_fam->fam_create_region(DATA_REGION, 1048576, 0777, RAID1);
+    dataRegion = my_fam->fam_create_region(DATA_REGION, 1048576, 0777, NULL);
   }
   char msg1[200] = {0};
   char msg2[200] = {0};

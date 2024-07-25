@@ -120,11 +120,13 @@ include_directories(SYSTEM ${OpenFAM_DIR}/third-party/build/include) # third-par
 include_directories(${OpenFAM_DIR}/src)
 #include_directories(${PROJECT_SOURCE_DIR}/test/util) # utility functions
 include_directories(${PROJECT_SOURCE_DIR}/src) # private headers (src)
+include_directories(/opt/cray/libfabric/1.15.2.0/include/) # private headers (src)
 #include_directories(${PROJECT_SOURCE_DIR}/src/pmi) # private headers (src)
 #
 # library directories
 #
-link_directories(${OpenFAM_DIR}/third-party/build/lib ${OpenFAM_DIR}/build/src) # third-party libraries
+link_directories(${OpenFAM_DIR}/third-party/build/lib ${OpenFAM_DIR}/third-party/build/lib64 ${OpenFAM_DIR}/build/src ${OpenFAM_DIR}/build/lib) # third-party libraries
+link_directories(/opt/cray/libfabric/1.15.2.0/lib /opt/cray/libfabric/1.15.2.0/lib64)
 
 #
 # Set openFAM options to be used only by test. Some individual test cases might override these options.

@@ -55,7 +55,7 @@
 using namespace std;
 namespace openfam {
 
-#define MIN_OBJ_SIZE 128
+//#define MIN_OBJ_SIZE 128
 #define MAX_DATA_IN_MSG 128
 
 #define THROW_ATL_ERR_MSG(exception, message_str)                              \
@@ -324,6 +324,7 @@ int populate_fam_options(fam *inp_fam) {
         famContextModel = FAM_CONTEXT_REGION;
     famOptions.runtime = (char *)inp_fam->fam_get_option(strdup("RUNTIME"));
     famOptions.numConsumer = (char *)inp_fam->fam_get_option(strdup("NUM_CONSUMER"));
+    famOptions.if_device = (char *)strdup("cxi0");
     return 0;
 }
 int atl_initialize(fam *inp_fam) {
@@ -354,7 +355,7 @@ int atl_initialize(fam *inp_fam) {
     uid = (uint32_t)getuid();
     gid = (uint32_t)getgid();
 
-    if ((ret = fabric_initialize(memServerName, service, 0, famOptions.libfabricProvider,
+    if ((ret = fabric_initialize(memServerName, service, 0, famOptions.libfabricProvider,famOptions.if_device,
                                  &fi, &fabric, &eq, &domain, famThreadModel)) < 0) {
         return ret;
     }
@@ -507,16 +508,17 @@ int atl_finalize() {
 }
 
 int validate_item(Fam_Descriptor *descriptor) {
+#if 0
     std::ostringstream message;
-    uint64_t key = descriptor->get_key();
+    uint64_t key = descriptor->get_keys();
     if (key == FAM_KEY_UNINITIALIZED) {
     	Fam_Global_Descriptor globalDescriptor =
             descriptor->get_global_descriptor();
         uint64_t regionId = globalDescriptor.regionId & REGIONID_MASK ;
     	uint64_t offset = globalDescriptor.offset;
-    	uint64_t memoryServerId = descriptor->get_memserver_id();
+    	uint64_t *memoryServerId = descriptor->get_memserver_ids();
         Fam_Region_Item_Info info = famCIS->check_permission_get_item_info(
-            regionId, offset, memoryServerId, uid, gid);
+            regionId, offset, memoryServerId[0], uid, gid);
         descriptor->set_desc_status(DESC_INIT_DONE);
         descriptor->bind_key(info.key);
         descriptor->set_name(info.name);
@@ -524,6 +526,26 @@ int validate_item(Fam_Descriptor *descriptor) {
         descriptor->set_size(info.size);
         descriptor->set_base_address(info.base);
     }
+    return 0;
+#endif
+    std::ostringstream message;
+    if (descriptor->get_desc_status() == DESC_INVALID) {
+        std::ostringstream message;
+        message << "Descriptor is no longer valid" << endl;
+        THROW_ERR_MSG(Fam_InvalidOption_Exception, message.str().c_str());
+    }
+
+    uint64_t *keys = descriptor->get_keys();
+
+    if (keys == NULL) {
+        Fam_Global_Descriptor globalDescriptor = descriptor->get_global_descriptor();
+	uint64_t regionId = globalDescriptor.regionId & REGIONID_MASK;
+    	uint64_t offset = globalDescriptor.offset;
+    	uint64_t firstMemserverId = descriptor->get_first_memserver_id();
+         famCIS->check_permission_get_item_info(regionId, offset, firstMemserverId, uid, gid);
+	 descriptor->set_desc_status(DESC_INIT_DONE);
+    }
+
     return 0;
 }
 
@@ -583,26 +605,30 @@ int fam_get_atomic(void *local, Fam_Descriptor *descriptor,
     ATL_PROFILE_END_ALLOCATOR(fam_get_atomic);
     ATL_PROFILE_START_OPS(fam_get_atomic);
     if (ret == 0) {
+    	uint64_t *nodeIds = descriptor->get_memserver_ids();
+    	uint64_t nodeId = nodeIds[0];
+        Fam_Context *ATLCtx = get_defaultCtx(nodeId);
         // Read data from FAM region with this key
         globalDescriptor = descriptor->get_global_descriptor();
-        uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
-
+        //uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
+#if 0
         key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
         key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
         key |= 1;
-        ret = fabric_register_mr(local, nbytes, &key,
-                                     domain, 1, mr);
+#endif
+	key = 10;
+        ret = fabric_register_mr(local, nbytes, &key, 
+                                     domain, ATLCtx->get_ep(), famOptions.libfabricProvider, 1, mr);
         if (ret < 0) {
             cout << "error: memory register failed" << endl;
             return -4;
         }
 
-        uint64_t nodeId = descriptor->get_memserver_id();
-        Fam_Context *ATLCtx = get_defaultCtx(nodeId);
         fi_context *ctx = fabric_post_response_buff(&retStatus,(*fiAddrs)[nodeId], ATLCtx,sizeof(retStatus));
+	//uint64_t *baseAddrList = descriptor->get_base_address_list();
         ret = famCIS->get_atomic(globalDescriptor.regionId & REGIONID_MASK,
 				 globalDescriptor.offset, offset, nbytes,
-				 key, get_selfAddr(nodeId), get_selfAddrLen(nodeId),
+				 key, 0, get_selfAddr(nodeId), get_selfAddrLen(nodeId),
 				 nodeId, uid, gid);
 			
         if (ret == 0) {
@@ -642,29 +668,34 @@ int fam_put_atomic(void *local, Fam_Descriptor *descriptor,
     ATL_PROFILE_END_ALLOCATOR(fam_put_atomic);
     ATL_PROFILE_START_OPS(fam_put_atomic);
     if (ret == 0) {
+        uint64_t *nodeIds = descriptor->get_memserver_ids();
+        uint64_t nodeId = nodeIds[0];
+        Fam_Context *ATLCtx = get_defaultCtx(nodeId);
         // Read data from FAM region with this key
         globalDescriptor = descriptor->get_global_descriptor();
 
         if (nbytes > MAX_DATA_IN_MSG) {
-            uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
-            key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
-            key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
-            key |= 1;
-            ret = fabric_register_mr(local, nbytes, &key,
-                                     domain, 1, mr);
+            //uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
+            //key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
+            //key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
+            //key |= 1;
+		key = 11;
+	    ret = fabric_register_mr(local, nbytes, &key,
+			                domain, ATLCtx->get_ep(), famOptions.libfabricProvider, 1, mr);
             if (ret < 0) {
                 cout << "error: memory register failed" << endl;
                 return -4;
             }
         }
-        uint64_t nodeId = descriptor->get_memserver_id();
-        Fam_Context *ATLCtx = get_defaultCtx(nodeId);
 	if (nbytes > MAX_DATA_IN_MSG) 
             ctx = fabric_post_response_buff(&retStatus,(*fiAddrs)[nodeId], ATLCtx,sizeof(retStatus));
 
+	//uint64_t *baseAddrList = descriptor->get_base_address_list();
+
+
         ret = famCIS->put_atomic(globalDescriptor.regionId & REGIONID_MASK,
                                  globalDescriptor.offset, offset, nbytes,
-                                 key, get_selfAddr(nodeId),get_selfAddrLen(nodeId),
+                                 key, 0 , get_selfAddr(nodeId),get_selfAddrLen(nodeId),
                                  (const char *)local, nodeId, uid, gid);
 
 	if ((ret == 0) && (nbytes > MAX_DATA_IN_MSG)) {
@@ -702,27 +733,30 @@ int fam_scatter_atomic(void *local, Fam_Descriptor *descriptor,
   //    FAM_PROFILE_END_ALLOCATOR(fam_put_atomic);
   //    FAM_PROFILE_START_OPS(fam_put_atomic);
   if (ret == 0) {
+    uint64_t *nodeIds = descriptor->get_memserver_ids();
+    uint64_t nodeId = nodeIds[0];
+    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     // Read data from FAM region with this key
     globalDescriptor = descriptor->get_global_descriptor();
 
-    uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
-    key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
-    key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
-    key |= 1;
+    //uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
+    //key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
+    //key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
+    //key |= 1;
+    key = 11;
     ret =
-        fabric_register_mr(local, descriptor->get_size(), &key, domain, 1, mr);
+        fabric_register_mr(local, descriptor->get_size(), &key, domain, ATLCtx->get_ep(), famOptions.libfabricProvider, 1, mr);
     if (ret < 0) {
       message << "error: memory register failed";
       THROW_ATL_ERR_MSG(ATL_Exception, message.str().c_str());
     }
-    uint64_t nodeId = descriptor->get_memserver_id();
-    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     ctx = fabric_post_response_buff(&retStatus, (*fiAddrs)[nodeId], ATLCtx,
                                     sizeof(retStatus));
 
+    //uint64_t *baseAddrList = descriptor->get_base_address_list();
     ret = famCIS->scatter_strided_atomic(
         globalDescriptor.regionId & REGIONID_MASK, globalDescriptor.offset,
-        nElements, firstElement, stride, elementSize, key, get_selfAddr(nodeId),
+        nElements, firstElement, stride, elementSize, key, 0, get_selfAddr(nodeId),
         get_selfAddrLen(nodeId), nodeId, uid, gid);
 
     if (ret == 0) {
@@ -757,27 +791,30 @@ int fam_gather_atomic(void *local, Fam_Descriptor *descriptor,
   //    FAM_PROFILE_END_ALLOCATOR(fam_put_atomic);
   //    FAM_PROFILE_START_OPS(fam_put_atomic);
   if (ret == 0) {
+    uint64_t *nodeIds = descriptor->get_memserver_ids();
+    uint64_t nodeId = nodeIds[0];
+    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     // Read data from FAM region with this key
     globalDescriptor = descriptor->get_global_descriptor();
 
-    uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
-    key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
-    key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
-    key |= 1;
+    //uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
+    //key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
+    //key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
+    //key |= 1;
+    key = 11;
     ret =
-        fabric_register_mr(local, descriptor->get_size(), &key, domain, 1, mr);
+        fabric_register_mr(local, descriptor->get_size(), &key, domain, ATLCtx->get_ep(), famOptions.libfabricProvider, 1, mr);
     if (ret < 0) {
       message << "error: memory register failed";
       THROW_ATL_ERR_MSG(ATL_Exception, message.str().c_str());
     }
-    uint64_t nodeId = descriptor->get_memserver_id();
-    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     ctx = fabric_post_response_buff(&retStatus, (*fiAddrs)[nodeId], ATLCtx,
                                     sizeof(retStatus));
 
+    //uint64_t *baseAddrList = descriptor->get_base_address_list();
     ret = famCIS->gather_strided_atomic(
         globalDescriptor.regionId & REGIONID_MASK, globalDescriptor.offset,
-        nElements, firstElement, stride, elementSize, key, get_selfAddr(nodeId),
+        nElements, firstElement, stride, elementSize, key, 0, get_selfAddr(nodeId),
         get_selfAddrLen(nodeId), nodeId, uid, gid);
 
     if (ret == 0) {
@@ -812,15 +849,20 @@ int fam_scatter_atomic(void *local, Fam_Descriptor *descriptor,
   //    FAM_PROFILE_END_ALLOCATOR(fam_put_atomic);
   //    FAM_PROFILE_START_OPS(fam_put_atomic);
   if (ret == 0) {
+
+    uint64_t *nodeIds = descriptor->get_memserver_ids();
+    uint64_t nodeId = nodeIds[0];
+    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     // Read data from FAM region with this key
     globalDescriptor = descriptor->get_global_descriptor();
 
-    uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
-    key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
-    key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
-    key |= 1;
+    //uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
+    //key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
+    //key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
+    //key |= 1;
+    key = 11;
     ret =
-        fabric_register_mr(local, descriptor->get_size(), &key, domain, 1, mr);
+        fabric_register_mr(local, descriptor->get_size(), &key, domain,  ATLCtx->get_ep(), famOptions.libfabricProvider, 1, mr);
     if (ret < 0) {
       message << "error: memory register failed";
       THROW_ATL_ERR_MSG(ATL_Exception, message.str().c_str());
@@ -835,14 +877,13 @@ int fam_scatter_atomic(void *local, Fam_Descriptor *descriptor,
     indexStr << index.back();
     index.clear();
 
-    uint64_t nodeId = descriptor->get_memserver_id();
-    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     ctx = fabric_post_response_buff(&retStatus, (*fiAddrs)[nodeId], ATLCtx,
                                     sizeof(retStatus));
 
+    //uint64_t *baseAddrList = descriptor->get_base_address_list();
     ret = famCIS->scatter_indexed_atomic(
         globalDescriptor.regionId & REGIONID_MASK, globalDescriptor.offset,
-        nElements, string(indexStr.str()).c_str(), elementSize, key,
+        nElements, string(indexStr.str()).c_str(), elementSize, key, 0, 
         get_selfAddr(nodeId), get_selfAddrLen(nodeId), nodeId, uid, gid);
 
     if (ret == 0) {
@@ -876,15 +917,19 @@ int fam_gather_atomic(void *local, Fam_Descriptor *descriptor,
   //    FAM_PROFILE_END_ALLOCATOR(fam_put_atomic);
   //    FAM_PROFILE_START_OPS(fam_put_atomic);
   if (ret == 0) {
+    uint64_t *nodeIds = descriptor->get_memserver_ids();
+    uint64_t nodeId = nodeIds[0];
+    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     // Read data from FAM region with this key
     globalDescriptor = descriptor->get_global_descriptor();
 
-    uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
-    key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
-    key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
-    key |= 1;
+    //uint64_t dataitemId = globalDescriptor.offset / MIN_OBJ_SIZE;
+    //key |= (globalDescriptor.regionId & REGIONID_MASK) << REGIONID_SHIFT;
+    //key |= (dataitemId & DATAITEMID_MASK) << DATAITEMID_SHIFT;
+    //key |= 1;
+    key = 11;;
     ret =
-        fabric_register_mr(local, descriptor->get_size(), &key, domain, 1, mr);
+        fabric_register_mr(local, descriptor->get_size(), &key, domain,  ATLCtx->get_ep(), famOptions.libfabricProvider, 1, mr);
     if (ret < 0) {
       message << "error: memory register failed";
       THROW_ATL_ERR_MSG(ATL_Exception, message.str().c_str());
@@ -899,14 +944,13 @@ int fam_gather_atomic(void *local, Fam_Descriptor *descriptor,
     indexStr << index.back();
     index.clear();
 
-    uint64_t nodeId = descriptor->get_memserver_id();
-    Fam_Context *ATLCtx = get_defaultCtx(nodeId);
     ctx = fabric_post_response_buff(&retStatus, (*fiAddrs)[nodeId], ATLCtx,
                                     sizeof(retStatus));
 
+    //uint64_t *baseAddrList = descriptor->get_base_address_list();
     ret = famCIS->gather_indexed_atomic(
         globalDescriptor.regionId & REGIONID_MASK, globalDescriptor.offset,
-        nElements, string(indexStr.str()).c_str(), elementSize, key,
+        nElements, string(indexStr.str()).c_str(), elementSize, key, 0,
         get_selfAddr(nodeId), get_selfAddrLen(nodeId), nodeId, uid, gid);
 
     if (ret == 0) {

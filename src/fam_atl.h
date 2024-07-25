@@ -33,6 +33,7 @@
 #include <fam/fam.h>
 #include <cstddef>
 #include <exception>
+#include <iostream>
 namespace openfam {
 class ATLib {
 public:
@@ -72,6 +73,7 @@ protected:
 public:
     ATL_Exception(const char *msg) {
 	ATLErrMsg = msg;
+	std::cout << "ATL exception : " << ATLErrMsg << std::endl;
     }
 };
 
